@@ -1,5 +1,5 @@
 import requests
-from app.config import settings
+from app.core.config import settings
 from typing import Optional
 
 def call_openrouter_llm(prompt: str) -> Optional[str]:
