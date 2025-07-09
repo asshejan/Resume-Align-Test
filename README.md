@@ -11,6 +11,7 @@ This project is a FastAPI application that allows users to upload their CV (PDF 
 - Generates the modified CV in LaTeX and PDF formats
 - All generated LaTeX and PDF files are saved for your records
 - (Legacy) Fetches live jobs from the JSearch API and returns top 3 matches
+- **NEW:** Modify your CV to align with a job description and get the result as structured JSON (for ATS or further processing)
 
 ## Project Structure
 ```
@@ -87,6 +88,21 @@ project_name/
     - Modified CV as LaTeX (default)
     - Modified CV as PDF (if `as_pdf=true`)
     - All generated files are saved in `modified_cv_latex/` and `modified_cv_pdf/`
+- **CV Modify (JSON):** `POST /api/v1/cv/modify-json`
+  - **Purpose:** Uses OpenRouter LLM to subtly modify your CV to better match the job description, without inventing skills, and returns the result as structured JSON.
+  - **Form fields:**
+    - `cv_file`: Upload your CV (PDF or DOCX)
+    - `job_post_text`: Paste the job description (plain text)
+  - **Returns:**
+    - Modified CV as a JSON object (see schema in docs)
+    - Robust JSON cleaning and pretty-printing for easy integration
+- **CV Parse (JSON):** `POST /api/v1/cv/parse-json`
+  - **Purpose:** Extracts structured information from your CV (and optionally aligns with a job description) and returns it as JSON.
+  - **Form fields:**
+    - `cv_file`: Upload your CV (PDF or DOCX)
+    - `job_post_text`: (Optional) Paste the job description
+  - **Returns:**
+    - Extracted CV as a JSON object
 - **Test JSearch API:** `GET /api/v1/jobs/test-jsearch/?query=developer&location=chicago`
 - **AI Job Matching:** `POST /api/v1/jobs/match-jobs/?query=developer&location=chicago`
   - Upload a PDF file as `file` in the form data
