@@ -6,14 +6,14 @@ load_dotenv()
 class Settings:
     """Application settings"""
     JSEARCH_API_KEY: str = os.getenv("JSEARCH_API_KEY", "")
-    OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
+    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     
     # API URLs
     JSEARCH_BASE_URL: str = "https://jsearch.p.rapidapi.com"
-    OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
+    OPENAI_BASE_URL: str = "https://api.openai.com/v1"
     
     # Model settings
-    LLM_MODEL: str = "openai/gpt-4o-mini"
+    LLM_MODEL: str = "gpt-4o"  # or another OpenAI model name
     
     # App settings
     APP_NAME: str = "Resume Align Test"

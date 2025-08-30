@@ -1,8 +1,50 @@
 # Python
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
 
 # Virtual environment
 venv/
+env/
+ENV/
+
+# Environment variables (CRITICAL - DO NOT COMMIT)
 .env
+.env.local
+.env.development
+.env.test
+.env.production
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Database
+*.db
+*.sqlite3
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Temporary files
+*.tmp
+*.temp
+
+
 
 

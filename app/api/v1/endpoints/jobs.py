@@ -3,21 +3,12 @@ import json
 from fastapi import APIRouter, Query, HTTPException, UploadFile, File
 from fastapi.responses import JSONResponse
 import httpx
-from PyPDF2 import PdfReader
-
 from app.core.config import settings
+from app.utils.cv_parser import extract_text_from_pdf, extract_text_from_docx
+from app.utils.llm_client import call_openai_llm
+from app.schemas.cv import FileValidation, FileType
 
 router = APIRouter()
-
-def extract_text_from_pdf(file) -> str:
-    """Extract text content from uploaded PDF file"""
-    reader = PdfReader(file)
-    text = ""
-    for page in reader.pages:
-        page_text = page.extract_text()
-        if page_text:
-            text += page_text + "\n"
-    return text
 
 async def fetch_jobs_from_api(query: str, location: str):
     """Fetch jobs from JSearch API"""
@@ -41,7 +32,7 @@ async def fetch_jobs_from_api(query: str, location: str):
         return resp.json().get("data", [])
 
 async def get_top_matches(cv_text: str, jobs: list):
-    """Get top job matches using OpenRouter LLM"""
+    """Get top job matches using OpenAI LLM"""
     job_descriptions = [
         f"Job {i+1}: {job['job_title']} at {job['employer_name']}\nDescription: {job.get('job_description', '')}"
         for i, job in enumerate(jobs)
@@ -59,9 +50,8 @@ async def get_top_matches(cv_text: str, jobs: list):
     )
 
     headers = {
-        "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
-        "HTTP-Referer": settings.APP_NAME,
-        "X-Title": "CV-Job-Match"
+        "Authorization": f"Bearer {settings.OPENAI_API_KEY}",
+        "Content-Type": "application/json"
     }
     data = {
         "model": settings.LLM_MODEL,
@@ -73,7 +63,7 @@ async def get_top_matches(cv_text: str, jobs: list):
     
     async with httpx.AsyncClient() as client:
         response = await client.post(
-            f"{settings.OPENROUTER_BASE_URL}/chat/completions",
+            f"{settings.OPENAI_BASE_URL}/chat/completions",
             headers=headers,
             json=data,
             timeout=60
@@ -105,13 +95,21 @@ async def match_jobs(
 ):
     """Match CV with jobs using AI"""
     # Validate file type
-    if not file.filename or not file.filename.endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are supported.")
-    
-    # Extract text from PDF
-    cv_text = extract_text_from_pdf(file.file)
-    if not cv_text.strip():
-        raise HTTPException(status_code=400, detail="Could not extract text from PDF.")
+    if not file.filename or not (file.filename.endswith(".pdf") or file.filename.endswith(".docx")):
+        raise HTTPException(status_code=400, detail="Only PDF or DOCX files are supported.")
+    file_type = FileValidation.validate_file_type(file.filename)
+    file_bytes = file.file.read()
+    FileValidation.validate_file_size(len(file_bytes), max_size_mb=10)
+
+    # Extract text from file
+    if file_type == FileType.PDF:
+        cv_text = extract_text_from_pdf(file_bytes)
+    elif file_type == FileType.DOCX:
+        cv_text = extract_text_from_docx(file_bytes)
+    else:
+        raise HTTPException(status_code=400, detail="Unsupported file type")
+    if not cv_text or not cv_text.strip():
+        raise HTTPException(status_code=400, detail="Could not extract text from CV.")
 
     try:
         # Fetch jobs from API
@@ -140,3 +138,64 @@ async def match_jobs(
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}") 
+
+@router.post("/match-cv-description/")
+async def match_cv_description(
+    file: UploadFile = File(...),
+    job_description: str = Query(..., min_length=10, description="Job description text for matching")
+):
+    """
+    Match a CV (PDF or DOCX) with a job description string and return standard alignment scores.
+    Output: JSON with fair_match, exp_level, skill, industry_exp (all 0-100)
+    """
+    # Validate and process file
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Filename is required")
+    file_type = FileValidation.validate_file_type(file.filename)
+    file_bytes = file.file.read()
+    FileValidation.validate_file_size(len(file_bytes), max_size_mb=10)
+
+    # Extract CV text
+    if file_type == FileType.PDF:
+        cv_text = extract_text_from_pdf(file_bytes)
+    elif file_type == FileType.DOCX:
+        cv_text = extract_text_from_docx(file_bytes)
+    else:
+        raise HTTPException(status_code=400, detail="Unsupported file type")
+    if not cv_text:
+        raise HTTPException(status_code=400, detail="Failed to extract text from CV file")
+
+    # Compose deterministic, rule-based prompt for LLM
+    prompt = (
+        "You are a job matching assistant. Compare the following candidate CV and job description. "
+        "For each of the following categories, score the match as a percentage (0-100) using ONLY the following method: "
+        "1. EXP. Level: Count unique keywords/phrases related to experience level (e.g., years, seniority) that appear in both the CV and job description. "
+        "2. Skill: Count unique technical and soft skills that appear in both the CV and job description. "
+        "3. Industry Exp: Count unique industry/domain-specific terms that appear in both the CV and job description. "
+        "For each category, use the formula: (number of matches / total relevant keywords in job description) * 100, rounded to the nearest integer. "
+        "Do not use subjective judgment or randomness. Use the same logic every time. "
+        "Then, compute Fair Match as the average of the three. "
+        "Output ONLY a JSON object in this format: {\"fair_match\": 0, \"exp_level\": 0, \"skill\": 0, \"industry_exp\": 0}. "
+        "Do not include any explanation or extra text.\n\n"
+        f"Job Description:\n{job_description}\n\nCV:\n{cv_text}"
+    )
+
+    result = call_openai_llm(prompt)
+    if not result:
+        raise HTTPException(status_code=500, detail="Failed to get response from LLM")
+
+    # Clean and parse JSON
+    import re, json
+    match = re.search(r'\{.*\}', result, re.DOTALL)
+    if not match:
+        raise HTTPException(status_code=500, detail={"raw_response": result, "error": "Could not parse LLM response as JSON."})
+    try:
+        parsed = json.loads(match.group(0))
+        # Ensure all required fields are present and are ints
+        for key in ["fair_match", "exp_level", "skill", "industry_exp"]:
+            if key not in parsed:
+                raise ValueError(f"Missing field: {key}")
+            parsed[key] = int(parsed[key])
+        return parsed
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"raw_response": result, "error": str(e)}) 
